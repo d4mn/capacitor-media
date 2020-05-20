@@ -249,7 +249,7 @@ public class MediaPlugin extends Plugin {
                 return;
             }
 
-            File expFile = copyFile(inputFile, albumDir, extension);
+            File expFile = copyFile(inputFile, albumDir, extension, destination);
             scanPhoto(expFile);
 
             JSObject result = new JSObject();
@@ -262,7 +262,7 @@ public class MediaPlugin extends Plugin {
 
     }
 
-    private File copyFile(File inputFile, File albumDir, String extension) {
+    private File copyFile(File inputFile, File albumDir, String extension, String destination) {
 
         // if destination folder does not exist, create it
         if (!albumDir.exists()) {
@@ -273,7 +273,8 @@ public class MediaPlugin extends Plugin {
 
         // generate image file name using current date and time
         String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmssSSS").format(new Date());
-        File newFile = new File(albumDir, "IMG_" + timeStamp + extension);
+        String prefix = destination == "MOVIES" ? "VID_" : "IMG_";
+        File newFile = new File(albumDir, prefix + timeStamp + extension);
 
         // Read and write image files
         FileChannel inChannel = null;
