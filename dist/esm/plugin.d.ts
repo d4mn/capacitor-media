@@ -6,4 +6,5 @@ export declare class Media implements MediaPluginProtocol {
     saveVideo(options?: MediaSaveOptions): Promise<void>;
     saveGif(options?: MediaSaveOptions): Promise<void>;
     createAlbum(options: MediaAlbumCreate): Promise<void>;
+    cancel(): Promise<void>;
 }

@@ -19,5 +19,8 @@ export class Media {
     createAlbum(options) {
         return MediaPlugin.createAlbum(options);
     }
+    cancel() {
+        return MediaPlugin.cancel();
+    }
 }
 //# sourceMappingURL=plugin.js.map
