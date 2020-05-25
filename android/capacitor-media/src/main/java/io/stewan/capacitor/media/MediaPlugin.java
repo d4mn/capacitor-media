@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.AsyncTask;
 import android.os.Environment;
 import android.util.Log;
 import android.provider.MediaStore;
@@ -15,7 +16,10 @@ import com.getcapacitor.NativePlugin;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
+import com.getcapacitor.PluginRequestCodes;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -35,8 +39,15 @@ import java.util.regex.Pattern;
 @NativePlugin(permissions = {
         Manifest.permission.READ_EXTERNAL_STORAGE,
         Manifest.permission.WRITE_EXTERNAL_STORAGE
-})
+},
+        requestCodes = {
+                MediaPlugin.REQUEST_WRITE
+        })
 public class MediaPlugin extends Plugin {
+    public static String tag = "Capacitor/MediaPlugin";
+
+    public static final int REQUEST_WRITE = 1986;
+    AsyncTask<?, ?, ?> downloadTask;
 
     // @todo
     @PluginMethod()
@@ -46,19 +57,19 @@ public class MediaPlugin extends Plugin {
 
     @PluginMethod()
     public void getAlbums(PluginCall call) {
-        Log.d("DEBUG LOG", "GET ALBUMS");
+        Log.d(MediaPlugin.tag, "GET ALBUMS");
         if (hasPermission(Manifest.permission.READ_EXTERNAL_STORAGE)) {
-            Log.d("DEBUG LOG", "HAS PERMISSIONS");
+            Log.d(MediaPlugin.tag, "HAS PERMISSIONS");
             _getAlbums(call);
         } else {
-            Log.d("DEBUG LOG", "NOT ALLOWED");
+            Log.d(MediaPlugin.tag, "NOT ALLOWED");
             saveCall(call);
             pluginRequestPermission(Manifest.permission.READ_EXTERNAL_STORAGE, 1986);
         }
     }
 
     private void _getAlbums(PluginCall call) {
-        Log.d("DEBUG LOG", "___GET ALBUMS");
+        Log.d(MediaPlugin.tag, "___GET ALBUMS");
 
         JSObject response = new JSObject();
         JSArray albums = new JSArray();
@@ -78,8 +89,8 @@ public class MediaPlugin extends Plugin {
         }
 
         response.put("albums", albums);
-        Log.d("DEBUG LOG", String.valueOf(response));
-        Log.d("DEBUG LOG", "___GET ALBUMS FINISHED");
+        Log.d(MediaPlugin.tag, String.valueOf(response));
+        Log.d(MediaPlugin.tag, "___GET ALBUMS FINISHED");
 
         call.resolve(response);
     }
@@ -92,19 +103,19 @@ public class MediaPlugin extends Plugin {
 
     @PluginMethod()
     public void createAlbum(PluginCall call) {
-        Log.d("DEBUG LOG", "CREATE ALBUM");
+        Log.d(MediaPlugin.tag, "CREATE ALBUM");
         if (hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
-            Log.d("DEBUG LOG", "HAS PERMISSIONS");
+            Log.d(MediaPlugin.tag, "HAS PERMISSIONS");
             _createAlbum(call);
         } else {
-            Log.d("DEBUG LOG", "NOT ALLOWED");
+            Log.d(MediaPlugin.tag, "NOT ALLOWED");
             saveCall(call);
             pluginRequestPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE, 1986);
         }
     }
 
     private void _createAlbum(PluginCall call) {
-        Log.d("DEBUG LOG", "___CREATE ALBUM");
+        Log.d(MediaPlugin.tag, "___CREATE ALBUM");
         String folderName = call.getString("name");
         String folder = Environment.getExternalStorageDirectory() + "/" + folderName;
 
@@ -112,14 +123,14 @@ public class MediaPlugin extends Plugin {
 
         if (!f.exists()) {
             if (!f.mkdir()) {
-                Log.d("DEBUG LOG", "___ERROR ALBUM");
+                Log.d(MediaPlugin.tag, "___ERROR ALBUM");
                 call.error("Cant create album");
             } else {
-                Log.d("DEBUG LOG", "___SUCCESS ALBUM CREATED");
+                Log.d(MediaPlugin.tag, "___SUCCESS ALBUM CREATED");
                 call.success();
             }
         } else {
-            Log.d("DEBUG LOG", "___ERROR ALBUM ALREADY EXISTS");
+            Log.d(MediaPlugin.tag, "___ERROR ALBUM ALREADY EXISTS");
             call.error("Album already exists");
         }
 
@@ -128,41 +139,37 @@ public class MediaPlugin extends Plugin {
 
     @PluginMethod()
     public void savePhoto(PluginCall call) {
-        Log.d("DEBUG LOG", "SAVE VIDEO TO ALBUM");
+        Log.d(MediaPlugin.tag, "SAVE VIDEO TO ALBUM");
         if (hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
-            Log.d("DEBUG LOG", "HAS PERMISSIONS");
+            Log.d(MediaPlugin.tag, "HAS PERMISSIONS");
             _saveMedia(call, "PICTURES");
         } else {
-            Log.d("DEBUG LOG", "NOT ALLOWED");
+            Log.d(MediaPlugin.tag, "NOT ALLOWED");
             saveCall(call);
             pluginRequestPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE, 1986);
         }
     }
 
     @PluginMethod()
-    public void saveVideo(PluginCall call) {
-        Log.d("DEBUG LOG", "SAVE VIDEO TO ALBUM");
+    public void saveVideo(final PluginCall call) {
+        Log.d(getLogTag(), "SAVE VIDEO to album");
         if (hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
-            Log.d("DEBUG LOG", "HAS PERMISSIONS");
+            Log.d(getLogTag(), "HAS PERMISSIONS");
             _saveMedia(call, "MOVIES");
         } else {
-            Log.d("DEBUG LOG", "NOT ALLOWED");
+            Log.d(getLogTag(), "Dont have permissions. Save call and ask for permissions.");
             saveCall(call);
             pluginRequestPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE, 1986);
         }
     }
 
-
     @PluginMethod()
-    public void saveGif(PluginCall call) {
-        Log.d("DEBUG LOG", "SAVE GIF TO ALBUM");
-        if (hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
-            Log.d("DEBUG LOG", "HAS PERMISSIONS");
-            _saveMedia(call, "PICTURES");
+    public void cancel(PluginCall call) {
+        if(downloadTask) {
+            downloadTask.cancel(true);
+            call.success();
         } else {
-            Log.d("DEBUG LOG", "NOT ALLOWED");
-            saveCall(call);
-            pluginRequestPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE, 1986);
+            call.error("Download task is not running");
         }
     }
 
@@ -171,42 +178,7 @@ public class MediaPlugin extends Plugin {
         return extensionIndex == -1 ? "" : "." + path.substring(extensionIndex);
     }
 
-    private String _downloadMediaFromRemote(String remotePath) {
-        try {
-            URL remoteURL = new URL(remotePath);
-            HttpURLConnection connection = (HttpURLConnection) remoteURL.openConnection();
-            connection.setDoInput(true);
-            connection.connect();
-            InputStream inputStream = connection.getInputStream();
-            File file = new File(Environment.getExternalStorageDirectory() + "/temp/");
-            if (!file.exists()) {
-                file.mkdir();
-            }
-
-            String extension = _getPathExtension(remoteURL.getPath());
-            String filePath = file.getAbsolutePath() + "/" + System.currentTimeMillis() + extension;
-            OutputStream outputStream = new FileOutputStream(filePath);
-            byte[] buffer = new byte[4 * 104];
-            int read;
-
-            while ((read = inputStream.read(buffer)) != -1) {
-                outputStream.write(buffer, 0, read);
-            }
-
-            outputStream.flush();
-            outputStream.close();
-            inputStream.close();
-            return filePath;
-        } catch (MalformedURLException e) {
-            e.printStackTrace();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-        return "";
-    }
-
-
-    private void _saveMedia(PluginCall call, String destination) {
+    private void _saveMedia(final PluginCall call, String destination) {
         String dest;
         if (destination == "MOVIES") {
             dest = Environment.DIRECTORY_MOVIES;
@@ -214,67 +186,71 @@ public class MediaPlugin extends Plugin {
             dest = Environment.DIRECTORY_PICTURES;
         }
 
-        Log.d("DEBUG LOG", "___SAVE MEDIA TO ALBUM");
-        String inputPath = call.getString("path");
+        String album = call.getString("album");
+        final String extension = call.getString("extension");
+        File albumDir = Environment.getExternalStoragePublicDirectory(dest);
+        if (album != null) {
+            albumDir = new File(albumDir, album);
+            // if destination folder does not exist, create it
+            if (!albumDir.exists()) {
+                if (!albumDir.mkdir()) {
+                    throw new RuntimeException("Destination folder does not exist and cannot be created.");
+                }
+            }
+        }
+
+        Log.d(MediaPlugin.tag, "___SAVE MEDIA TO ALBUM " + albumDir.getPath());
+
+        final String inputPath = call.getString("path");
         if (inputPath == null) {
             call.reject("Input file path is required");
             return;
         }
 
-        String fileLocalPath;
+        final JSObject result = new JSObject();
+
         if (inputPath.startsWith("http") || inputPath.startsWith("https")) {
-            fileLocalPath = _downloadMediaFromRemote(inputPath);
-        } else {
-            fileLocalPath = Uri.parse(inputPath).getPath();
-        }
-
-        if (fileLocalPath == "") {
-            call.reject("file download fail");
-            return;
-        }
-
-        File inputFile = new File(fileLocalPath);
-
-        String album = call.getString("album");
-        File albumDir = Environment.getExternalStoragePublicDirectory(dest);
-        if (album != null) {
-            albumDir = new File(albumDir, album);
-        }
-
-        try {
-            String userExtension = call.getString("extension");
-            String extension = userExtension.isEmpty() ? _getPathExtension(inputFile.getAbsolutePath()) : userExtension;
-            if (extension.isEmpty()) {
-                call.reject("Input file path extension is required");
-                return;
+            try {
+                final File finalAlbumDir = albumDir;
+                downloadTask = new DownloadMedia(){
+                    @Override
+                    public void onPostExecute(File expFile) {
+                        scanPhoto(expFile);
+                        result.put("filePath", expFile.toString());
+                        call.resolve(result);
+                    }
+                }.execute(inputPath,albumDir.getPath(),extension);
+            } catch (RuntimeException e) {
+                call.reject("RuntimeException occurred", e);
             }
 
-            File expFile = copyFile(inputFile, albumDir, extension, destination);
-            scanPhoto(expFile);
-
-            JSObject result = new JSObject();
-            result.put("filePath", expFile.toString());
-            call.resolve(result);
-
-        } catch (RuntimeException e) {
-            call.reject("RuntimeException occurred", e);
+        } else {
+            String fileLocalPath;
+            fileLocalPath = Uri.parse(inputPath).getPath();
+            if (fileLocalPath == "") {
+                call.reject("File save failed");
+                return;
+            }
+            File inputFile = new File(fileLocalPath);
+            try {
+                final File expFile;
+                expFile = copyFile(inputFile, albumDir, extension);
+                scanPhoto(expFile);
+                result.put("filePath", expFile.toString());
+                call.resolve(result);
+            } catch (RuntimeException e) {
+                call.reject("RuntimeException occurred", e);
+            }
         }
 
     }
 
-    private File copyFile(File inputFile, File albumDir, String extension, String destination) {
+    private File copyFile(File inputFile, File albumDir, String extension) {
 
-        // if destination folder does not exist, create it
-        if (!albumDir.exists()) {
-            if (!albumDir.mkdir()) {
-                throw new RuntimeException("Destination folder does not exist and cannot be created.");
-            }
-        }
 
         // generate image file name using current date and time
         String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmssSSS").format(new Date());
-        String prefix = destination == "MOVIES" ? "VID_" : "IMG_";
-        File newFile = new File(albumDir, prefix + timeStamp + extension);
+        File newFile = new File(albumDir, "IMG_" + timeStamp + extension);
 
         // Read and write image files
         FileChannel inChannel = null;
@@ -329,23 +305,95 @@ public class MediaPlugin extends Plugin {
     protected void handleRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.handleRequestPermissionsResult(requestCode, permissions, grantResults);
 
-        if (savedLastCall == null) {
+        Log.d(getLogTag(), "handleRequestPermissionsResult function");
+        if (getSavedCall() == null) {
             Log.d(getLogTag(), "No stored plugin call for permissions request result");
             return;
         }
-
+        PluginCall savedCall = getSavedCall();
         for (int r : grantResults) {
             if (r == PackageManager.PERMISSION_DENIED) {
                 Log.d(getLogTag(), "Permission not granted by the user");
-                savedLastCall.reject("Permission denied");
+                savedCall.error("Permission denied");
+                this.freeSavedCall();
                 return;
             }
         }
 
-        if (requestCode == 9800) {
-            // doWhatever(savedLastCall);
+        if (requestCode == 1986) {
+            this.saveVideo(savedCall);
         }
+        this.freeSavedCall();
+    }
 
-        savedLastCall = null;
+    private class DownloadMedia extends AsyncTask<String, File, File> {
+
+        @Override
+        protected File doInBackground(String... strings) {
+            Log.d(MediaPlugin.tag,"Starting download of media: "+strings[0]);
+            try {
+                JSObject ret = new JSObject();
+                URL remoteURL = new URL(strings[0]);
+                HttpURLConnection connection = (HttpURLConnection) remoteURL.openConnection();
+                connection.setDoInput(true);
+                connection.connect();
+                if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
+                    Log.d(MediaPlugin.tag, "Server returned HTTP " + connection.getResponseCode()
+                            + " " + connection.getResponseMessage());
+                    throw new RuntimeException("Bad HTTP response.");
+                }
+                int fileLength = connection.getContentLength();
+
+                InputStream inputStream = new BufferedInputStream(connection.getInputStream());
+
+                // generate image file name using current date and time
+                String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmssSSS").format(new Date());
+                File newFile = new File(strings[1], "VID_" + timeStamp + strings[2]);
+
+                OutputStream outputStream = new BufferedOutputStream(new FileOutputStream(newFile));
+
+                ret.put("started", true);
+                notifyListeners("status", ret);
+                ret.remove("started");
+
+                byte[] buffer = new byte[1024 * 50];
+                int read;
+                long total = 0;
+                long progress = 0;
+
+                ret.put("size", fileLength);
+                ret.put("total", total);
+                ret.put("progress", progress);
+                ret.put("finished", false);
+                notifyListeners("progress", ret);
+                while ((read = inputStream.read(buffer)) != -1) {
+                    total += read;
+                    if (fileLength > 0) {
+                        long prog = (int) (total * 100 / fileLength);
+                        if (prog > progress) {
+                            progress = prog;
+                            ret.put("total", total);
+                            ret.put("progress", progress);
+                            Log.d(MediaPlugin.tag, "Progress:: " + ret.toString());
+                            notifyListeners("progress", ret);
+                        }
+                    }
+
+                    outputStream.write(buffer, 0, read);
+                }
+                outputStream.flush();
+                outputStream.close();
+                inputStream.close();
+                ret.put("finished", true);
+                notifyListeners("progress", ret);
+                return newFile;
+            } catch (MalformedURLException e) {
+                e.printStackTrace();
+                throw new RuntimeException("Bad url");
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            throw new RuntimeException("Something went wrong. Failed to download video");
+        }
     }
 }

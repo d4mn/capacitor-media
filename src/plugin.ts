@@ -34,4 +34,8 @@ export class Media implements MediaPluginProtocol {
   createAlbum(options: MediaAlbumCreate): Promise<void> {
     return MediaPlugin.createAlbum(options);
   }
+
+  cancel() : Promise<void> {
+    return MediaPlugin.cancel();
+  }
 }
