@@ -16,7 +16,6 @@ import com.getcapacitor.NativePlugin;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
-import com.getcapacitor.PluginRequestCodes;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -33,7 +32,6 @@ import java.net.URL;
 import java.nio.channels.FileChannel;
 import java.text.SimpleDateFormat;
 import java.util.Date;
-import java.util.regex.Pattern;
 
 
 @NativePlugin(permissions = {
@@ -165,7 +163,7 @@ public class MediaPlugin extends Plugin {
 
     @PluginMethod()
     public void cancel(PluginCall call) {
-        if(downloadTask) {
+        if (!downloadTask.isCancelled()) {
             downloadTask.cancel(true);
             call.success();
         } else {
@@ -212,14 +210,21 @@ public class MediaPlugin extends Plugin {
         if (inputPath.startsWith("http") || inputPath.startsWith("https")) {
             try {
                 final File finalAlbumDir = albumDir;
-                downloadTask = new DownloadMedia(){
+                downloadTask = new DownloadMedia() {
                     @Override
-                    public void onPostExecute(File expFile) {
-                        scanPhoto(expFile);
-                        result.put("filePath", expFile.toString());
-                        call.resolve(result);
+                    public void onPostExecute(AsyncTaskResult<File> expFile) {
+                        if (expFile.getError() != null) {
+                            call.reject(expFile.getError().getMessage());
+                        } else if (isCancelled()) {
+                            // cancel handling here
+                        } else {
+                            File downloadedFile = expFile.getResult();
+                            scanPhoto(downloadedFile);
+                            result.put("filePath", expFile.toString());
+                            call.resolve(result);
+                        }
                     }
-                }.execute(inputPath,albumDir.getPath(),extension);
+                }.execute(inputPath, albumDir.getPath(), extension);
             } catch (RuntimeException e) {
                 call.reject("RuntimeException occurred", e);
             }
@@ -326,11 +331,34 @@ public class MediaPlugin extends Plugin {
         this.freeSavedCall();
     }
 
-    private class DownloadMedia extends AsyncTask<String, File, File> {
+    public class AsyncTaskResult<T> {
+        private T result;
+        private Exception error;
+
+        public T getResult() {
+            return result;
+        }
+
+        public Exception getError() {
+            return error;
+        }
+
+        public AsyncTaskResult(T result) {
+            super();
+            this.result = result;
+        }
+
+        public AsyncTaskResult(Exception error) {
+            super();
+            this.error = error;
+        }
+    }
+
+    private class DownloadMedia extends AsyncTask<String, File, AsyncTaskResult<File>> {
 
         @Override
-        protected File doInBackground(String... strings) {
-            Log.d(MediaPlugin.tag,"Starting download of media: "+strings[0]);
+        protected AsyncTaskResult doInBackground(String... strings) {
+            Log.d(MediaPlugin.tag, "Starting download of media: " + strings[0]);
             try {
                 JSObject ret = new JSObject();
                 URL remoteURL = new URL(strings[0]);
@@ -338,9 +366,8 @@ public class MediaPlugin extends Plugin {
                 connection.setDoInput(true);
                 connection.connect();
                 if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
-                    Log.d(MediaPlugin.tag, "Server returned HTTP " + connection.getResponseCode()
-                            + " " + connection.getResponseMessage());
-                    throw new RuntimeException("Bad HTTP response.");
+                    Log.d(MediaPlugin.tag, "Server returned HTTP " + connection.getResponseCode() + " " + connection.getResponseMessage());
+                    return new AsyncTaskResult(new RuntimeException("File not found."));
                 }
                 int fileLength = connection.getContentLength();
 
@@ -386,14 +413,12 @@ public class MediaPlugin extends Plugin {
                 inputStream.close();
                 ret.put("finished", true);
                 notifyListeners("progress", ret);
-                return newFile;
+                return new AsyncTaskResult<>(newFile);
             } catch (MalformedURLException e) {
-                e.printStackTrace();
-                throw new RuntimeException("Bad url");
+                return new AsyncTaskResult<>(new RuntimeException("Bad url"));
             } catch (IOException e) {
-                e.printStackTrace();
+                return new AsyncTaskResult<>(e);
             }
-            throw new RuntimeException("Something went wrong. Failed to download video");
         }
     }
 }
