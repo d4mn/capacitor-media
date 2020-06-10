@@ -164,7 +164,7 @@ public class MediaPlugin extends Plugin {
     @PluginMethod()
     public void cancel(PluginCall call) {
         if (!downloadTask.isCancelled()) {
-            downloadTask.cancel(true);
+            downloadTask.cancel(false);
             call.success();
         } else {
             call.error("Download task is not running");
@@ -223,6 +223,13 @@ public class MediaPlugin extends Plugin {
                             result.put("filePath", expFile.toString());
                             call.resolve(result);
                         }
+                    }
+
+                    @Override
+                    protected void onCancelled(AsyncTaskResult<File> fileAsyncTaskResult) {
+                        super.onCancelled(fileAsyncTaskResult);
+                        Log.d(MediaPlugin.tag,"Canceled download task "+fileAsyncTaskResult.getResult());
+                        fileAsyncTaskResult.getResult().delete();
                     }
                 }.execute(inputPath, albumDir.getPath(), extension);
             } catch (RuntimeException e) {
@@ -394,6 +401,12 @@ public class MediaPlugin extends Plugin {
                 ret.put("finished", false);
                 notifyListeners("progress", ret);
                 while ((read = inputStream.read(buffer)) != -1) {
+                    if(isCancelled()) {
+                        inputStream.close();
+                        outputStream.flush();
+                        outputStream.close();
+                        return new AsyncTaskResult<>(newFile);
+                    }
                     total += read;
                     if (fileLength > 0) {
                         long prog = (int) (total * 100 / fileLength);
@@ -405,7 +418,6 @@ public class MediaPlugin extends Plugin {
                             notifyListeners("progress", ret);
                         }
                     }
-
                     outputStream.write(buffer, 0, read);
                 }
                 outputStream.flush();
