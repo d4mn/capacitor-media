@@ -10,5 +10,5 @@ CAP_PLUGIN(MediaPlugin, "MediaPlugin",
    CAP_PLUGIN_METHOD(createAlbum, CAPPluginReturnPromise);
    CAP_PLUGIN_METHOD(savePhoto, CAPPluginReturnPromise);
    CAP_PLUGIN_METHOD(saveVideo, CAPPluginReturnPromise);
-   CAP_PLUGIN_METHOD(saveGif, CAPPluginReturnPromise);
+   CAP_PLUGIN_METHOD(cancel, CAPPluginReturnPromise);
 )

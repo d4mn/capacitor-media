@@ -405,6 +405,7 @@ public class MediaPlugin extends Plugin {
                         inputStream.close();
                         outputStream.flush();
                         outputStream.close();
+                        newFile.delete();
                         return new AsyncTaskResult<>(newFile);
                     }
                     total += read;

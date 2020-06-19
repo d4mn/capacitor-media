@@ -24,6 +24,13 @@ public class MediaPlugin: CAPPlugin {
     // Must be lazy here because it will prompt for permissions on instantiation without it
     lazy var imageManager = PHCachingImageManager()
     
+    lazy private var downloadManager = { () -> DownloadManager in
+        let downloadManager = DownloadManager()
+        return downloadManager
+    }()
+    
+    private var _savedCall : CAPPluginCall?
+    
     @objc func getAlbums(_ call: CAPPluginCall) {
         checkAuthorization(allowed: {
             self.fetchAlbumsToJs(call)
@@ -113,100 +120,35 @@ public class MediaPlugin: CAPPlugin {
         }, notAllowed: {
             call.error("Access to photos not allowed by user")
         })
-
+        
+    }
+    
+    @objc func cancel(_ call: CAPPluginCall) {
+        
+        guard let url = call.getString("url") else { call.error("No such download"); return }
+        let status = self.downloadManager.cancelDownloadFileBy(url)
+        call.resolve()
     }
     
     @objc func saveVideo(_ call: CAPPluginCall) {
-        guard let data = call.getString("path") else {
-            call.error("Must provide the data path")
+        guard let inputPath = call.getString("path") else {
+            call.reject("Must provide the data path")
+            return
+        }
+        guard let albumId = call.getString("album") else {
+            call.reject("Must provide the album")
             return
         }
         
-        let albumId = call.getString("album")
-        var targetCollection: PHAssetCollection?
-        
-        if albumId != nil {
-            let albumFetchResult = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [albumId!], options: nil)
-            albumFetchResult.enumerateObjects({ (collection, count, _) in
-                targetCollection = collection
-            })
-            if targetCollection == nil {
-                call.error("Unable to find that album")
-                return
-            }
-            if !targetCollection!.canPerform(.addContent) {
-                call.error("Album doesn't support adding content (is this a smart album?)")
-                return
-            }
-        }
+        _savedCall = call
         
         checkAuthorization(allowed: {
-            // Add it to the photo library.
-            PHPhotoLibrary.shared().performChanges({
-                let creationRequest = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: URL(string: data)!)
-                
-                if let collection = targetCollection {
-                    let addAssetRequest = PHAssetCollectionChangeRequest(for: collection)
-                    addAssetRequest?.addAssets([creationRequest?.placeholderForCreatedAsset! as Any] as NSArray)
-                }
-            }, completionHandler: {success, error in
-                if !success {
-                    call.error("Unable to save video to album", error)
-                } else {
-                    call.success()
-                }
-            })
+            self.downloadManager.addDelegate(key: inputPath, delegate: self)
+            self.downloadManager.startDownloadFileBy(inputPath)
         }, notAllowed: {
-            call.error("Access to photos not allowed by user")
+            call.reject("Access to photos not allowed by user")
         })
         
-    }
-    
-    @objc func saveGif(_ call: CAPPluginCall) {
-        guard let data = call.getString("path") else {
-            call.error("Must provide the data path")
-            return
-        }
-        
-        let albumId = call.getString("album")
-        var targetCollection: PHAssetCollection?
-        
-        if albumId != nil {
-            let albumFetchResult = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [albumId!], options: nil)
-            albumFetchResult.enumerateObjects({ (collection, count, _) in
-                targetCollection = collection
-            })
-            if targetCollection == nil {
-                call.error("Unable to find that album")
-                return
-            }
-            if !targetCollection!.canPerform(.addContent) {
-                call.error("Album doesn't support adding content (is this a smart album?)")
-                return
-            }
-        }
-        
-        checkAuthorization(allowed: {
-            // Add it to the photo library.
-            PHPhotoLibrary.shared().performChanges({
-                
-                let creationRequest = PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: URL(string: data)!)
-                
-                if let collection = targetCollection {
-                    let addAssetRequest = PHAssetCollectionChangeRequest(for: collection)
-                    addAssetRequest?.addAssets([creationRequest?.placeholderForCreatedAsset! as Any] as NSArray)
-                }
-                
-            }, completionHandler: {success, error in
-                if !success {
-                    call.error("Unable to save gif to album", error)
-                } else {
-                    call.success()
-                }
-            })
-        }, notAllowed: {
-            call.error("Access to photos not allowed by user")
-        })
     }
     
     func checkAuthorization(allowed: @escaping () -> Void, notAllowed: @escaping () -> Void) {
@@ -261,7 +203,7 @@ public class MediaPlugin: CAPPlugin {
         
         call.success([
             "albums": albums
-            ])
+        ])
     }
     
     func fetchResultAssetsToJs(_ call: CAPPluginCall) {
@@ -341,7 +283,7 @@ public class MediaPlugin: CAPPlugin {
         
         call.success([
             "medias": assets
-            ])
+        ])
     }
     
     
@@ -358,11 +300,41 @@ public class MediaPlugin: CAPPlugin {
         loc["speed"] = location.speed
         return loc
     }
+}
+
+extension MediaPlugin: DownloadManagerDelegate {
     
+    func didDownloadFileTo(location: URL) {
+        print("Download finished for url \(location)")
+        guard let albumId = _savedCall?.getString("album") else { return }
+        do {
+            // change extension because only file with video extension can be saved in photo library
+            let newURL = location.deletingPathExtension().appendingPathExtension("mp4")
+            try FileManager.default.moveItem(at: location, to: newURL)
+            let res = try SimpleMediaSaver.saveVideo(at: newURL, toCollectionWithName: albumId)
+            var ret = JSObject()
+            ret["finished"] = true
+            ret["filePath"] = res
+            self.notifyListeners("progress", data: ret)
+            _savedCall?.resolve(ret)
+        } catch {
+            _savedCall?.error("Failed to save video to library",error)
+        }
+        
+    }
     
-    /*
-     deinit {
-     PHPhotoLibrary.shared().unregisterChangeObserver(self)
-     }
-     */
+    func didUpdatedProgressForFileBy(url: String, progress: Float, size: Int64, done: Int64) {
+        var ret = JSObject()
+        ret["size"] = size;
+        ret["total"] = done
+        ret["progress"] = progress
+        ret["finished"] = false
+        self.notifyListeners("progress", data: ret)
+    }
+    
+    func didDownloadStarted(url: String) {
+        var ret = JSObject()
+        ret["started"] = true
+        self.notifyListeners("status", data: ret)
+    }
 }
